@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Grid</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            height: 40px;
+        }
+
+        .date-display {
+            font-size: 0.85rem;
+            font-weight: 500;
+            min-width: 90px;
+            color: #fff;
+        }
+
+        #date-slider {
+            flex: 1;
+            max-width: 300px;
+            height: 3px;
+            -webkit-appearance: none;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+        }
+
+        #date-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        select {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 3px;
+            background: #222;
+            color: #888;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        .grid-container {
+            position: absolute;
+            top: 40px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+        }
+
+        .grid {
+            display: grid;
+            gap: 8px;
+            padding: 0;
+            margin: auto;
+        }
+
+        .tile {
+            position: relative;
+            aspect-ratio: 1;
+            overflow: hidden;
+            cursor: pointer;
+            background: #111;
+        }
+
+        .tile img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .tile .info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 6px 8px;
+            background: rgba(0,0,0,0.8);
+            font-size: 0.7rem;
+            display: flex;
+            justify-content: space-between;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .tile:hover .info { opacity: 1; }
+
+        .tile .green-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 2px;
+            background: #2ecc71;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .tile:hover .green-bar { opacity: 1; }
+
+        .tile .green-mask {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        .tile:hover .green-mask { opacity: 0.7; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active { display: flex; }
+
+        .modal-content { text-align: center; }
+
+        .modal img {
+            max-width: 90vw;
+            max-height: 80vh;
+            border-radius: 4px;
+        }
+
+        .modal-info {
+            margin-top: 12px;
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .modal-info a { color: #4a9eff; text-decoration: none; }
+
+        .modal-close {
+            position: fixed;
+            top: 15px;
+            right: 20px;
+            font-size: 1.8rem;
+            color: #555;
+            cursor: pointer;
+        }
+        .modal-close:hover { color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="date-display" id="date-display">-</div>
+        <input type="range" id="date-slider" min="0" max="0" value="0">
+        <select id="sort-by">
+            <option value="green-desc">Most green</option>
+            <option value="green-asc">Least green</option>
+            <option value="point">By point</option>
+        </select>
+    </div>
+
+    <div class="grid-container" id="grid-container">
+        <div class="grid" id="grid"></div>
+    </div>
+
+    <div id="modal" class="modal">
+        <span class="modal-close" onclick="closeModal()">&times;</span>
+        <div class="modal-content">
+            <img id="modal-img" src="" alt="">
+            <div class="modal-info" id="modal-info"></div>
+        </div>
+    </div>
+
+    <script>
+        const FOLDER = 'tiles';
+        let manifest = null;
+        let dates = [];
+        let currentDateIndex = 0;
+        let scale = 1;
+        const baseTileSize = 280;
+
+        async function init() {
+            try {
+                const res = await fetch(`${FOLDER}/manifest.json`);
+                manifest = await res.json();
+                
+                const allDates = new Set();
+                manifest.points.forEach(p => {
+                    p.tiles.forEach(t => allDates.add(t.date));
+                });
+                dates = [...allDates].sort();
+                
+                const slider = document.getElementById('date-slider');
+                slider.max = dates.length - 1;
+                slider.value = dates.length - 1;
+                currentDateIndex = dates.length - 1;
+                
+                updateDateDisplay();
+                renderGrid();
+                setupZoom();
+            } catch (e) {
+                document.getElementById('grid').innerHTML = '<div style="padding:50px;color:#666">No tiles found</div>';
+            }
+        }
+
+        function updateDateDisplay() {
+            document.getElementById('date-display').textContent = dates[currentDateIndex] || '-';
+        }
+
+        function getTileForPointAtDate(point, targetDate) {
+            let best = null;
+            for (const tile of point.tiles) {
+                if (tile.date <= targetDate && (!best || tile.date > best.date)) {
+                    best = tile;
+                }
+            }
+            if (!best && point.tiles.length > 0) {
+                best = point.tiles.reduce((a, b) => a.date < b.date ? a : b);
+            }
+            return best;
+        }
+
+        function getSortedPoints() {
+            const sort = document.getElementById('sort-by').value;
+            const targetDate = dates[currentDateIndex];
+            
+            const pointsWithTiles = manifest.points.map(p => ({
+                ...p,
+                currentTile: getTileForPointAtDate(p, targetDate)
+            }));
+
+            return pointsWithTiles.sort((a, b) => {
+                const greenA = a.currentTile?.greenPercent || 0;
+                const greenB = b.currentTile?.greenPercent || 0;
+                if (sort === 'green-desc') return greenB - greenA;
+                if (sort === 'green-asc') return greenA - greenB;
+                return a.index - b.index;
+            });
+        }
+
+        function renderGrid() {
+            const sorted = getSortedPoints();
+            const grid = document.getElementById('grid');
+            const tileSize = Math.round(baseTileSize * scale);
+            const gap = 8;
+            
+            const containerWidth = document.getElementById('grid-container').clientWidth - 40;
+            const cols = Math.max(1, Math.floor((containerWidth + gap) / (tileSize + gap)));
+            grid.style.gridTemplateColumns = `repeat(${cols}, ${tileSize}px)`;
+            
+            grid.innerHTML = sorted.map(p => {
+                const tile = p.currentTile;
+                if (!tile) return '';
+                const green = tile.greenPercent || 0;
+                return `
+                    <div class="tile" 
+                         onclick="openModal('${p.folder}', '${tile.filename}', ${p.index}, ${p.lat}, ${p.lon}, '${tile.date}', ${green})"
+                         onmouseenter="showGreenMask(this, '${FOLDER}/${p.folder}/${tile.filename}')"
+                         onmouseleave="hideGreenMask(this)">
+                        <img src="${FOLDER}/${p.folder}/${tile.filename}" loading="lazy" alt="">
+                        <canvas class="green-mask"></canvas>
+                        <div class="green-bar" style="width:${green}%"></div>
+                        <div class="info">
+                            <span>P${p.index}</span>
+                            <span>${green.toFixed(1)}%</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function setupZoom() {
+            const container = document.getElementById('grid-container');
+            
+            // Trackpad/mouse wheel zoom (ctrl/cmd + scroll or pinch)
+            container.addEventListener('wheel', (e) => {
+                if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) < 50) {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.95 : 1.05;
+                    scale = Math.min(Math.max(0.3, scale * delta), 4);
+                    renderGrid();
+                }
+            }, { passive: false });
+
+            // Touch pinch zoom
+            let lastDistance = 0;
+            container.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    lastDistance = Math.hypot(
+                        e.touches[0].pageX - e.touches[1].pageX,
+                        e.touches[0].pageY - e.touches[1].pageY
+                    );
+                }
+            });
+
+            container.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2) {
+                    e.preventDefault();
+                    const distance = Math.hypot(
+                        e.touches[0].pageX - e.touches[1].pageX,
+                        e.touches[0].pageY - e.touches[1].pageY
+                    );
+                    const delta = distance / lastDistance;
+                    scale = Math.min(Math.max(0.3, scale * delta), 4);
+                    lastDistance = distance;
+                    renderGrid();
+                }
+            }, { passive: false });
+        }
+
+        // Green mask processing
+        const maskCache = new Map();
+        
+        async function showGreenMask(tile, src) {
+            const canvas = tile.querySelector('.green-mask');
+            const ctx = canvas.getContext('2d');
+            
+            // Check cache first
+            if (maskCache.has(src)) {
+                const cached = maskCache.get(src);
+                canvas.width = cached.width;
+                canvas.height = cached.height;
+                ctx.putImageData(cached.data, 0, 0);
+                return;
+            }
+            
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.src = src;
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                
+                const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                const data = imageData.data;
+                
+                // Process pixels - green detection (match analyze.js)
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+                    
+                    const brightness = (r + g + b) / 3;
+                    if (brightness < 20 || brightness > 250) {
+                        data[i + 3] = 0; // transparent
+                        continue;
+                    }
+                    
+                    // ExG > 12 AND g > b AND grvi > 0.025
+                    const exg = 2 * g - r - b;
+                    const grvi = (g - r) / Math.max(1, g + r);
+                    const isGreen = exg > 12 && g > b && grvi > 0.025;
+                    
+                    if (isGreen) {
+                        // Highlight in #08ff6b
+                        data[i] = 8;       // R
+                        data[i + 1] = 255; // G
+                        data[i + 2] = 107; // B
+                        data[i + 3] = 200; // A
+                    } else {
+                        data[i + 3] = 0; // transparent
+                    }
+                }
+                
+                ctx.putImageData(imageData, 0, 0);
+                
+                // Cache the result
+                maskCache.set(src, {
+                    width: img.width,
+                    height: img.height,
+                    data: ctx.getImageData(0, 0, img.width, img.height)
+                });
+            };
+        }
+        
+        function hideGreenMask(tile) {
+            // Mask hides via CSS opacity transition
+        }
+
+        function openModal(folder, filename, point, lat, lon, date, green) {
+            document.getElementById('modal-img').src = `${FOLDER}/${folder}/${filename}`;
+            document.getElementById('modal-info').innerHTML = `
+                Point ${point} · ${date} · ${green.toFixed(1)}% green<br>
+                <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank">
+                    ${lat.toFixed(5)}, ${lon.toFixed(5)} ↗
+                </a>
+            `;
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        document.getElementById('date-slider').addEventListener('input', function() {
+            currentDateIndex = parseInt(this.value);
+            updateDateDisplay();
+            renderGrid();
+        });
+        
+        document.getElementById('sort-by').addEventListener('change', renderGrid);
+        
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeModal();
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                if (currentDateIndex > 0) {
+                    currentDateIndex--;
+                    document.getElementById('date-slider').value = currentDateIndex;
+                    updateDateDisplay();
+                    renderGrid();
+                }
+            }
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                if (currentDateIndex < dates.length - 1) {
+                    currentDateIndex++;
+                    document.getElementById('date-slider').value = currentDateIndex;
+                    updateDateDisplay();
+                    renderGrid();
+                }
+            }
+        });
+
+        window.addEventListener('resize', renderGrid);
+        init();
+    </script>
+</body>
+</html>
