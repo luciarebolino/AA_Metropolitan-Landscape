@@ -1,6 +1,7 @@
 # AA Metropolitan Landscape - Workshop
+<img width="1517" height="386" alt="Screenshot 2026-02-28 at 2 01 05 PM" src="https://github.com/user-attachments/assets/99aef938-6342-482d-818e-752d975a549c" />
 
-## Overview
+
 
 **Goal**: Identify vegetation and study environmental changes using visual satellite analysis as an indicator.
 
